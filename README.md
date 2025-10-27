@@ -12,7 +12,7 @@ API backend pour la communication entre frontend et base de données
 
 **Technologies utilisées :**
 
-Frontend : React Native / KNIME
+Frontend : React Native (expo)
 
 Backend : Node.js
 
