@@ -1,0 +1,22 @@
+# Frontend SmartStock
+SmartStock/node_modules/
+SmartStock/.expo/
+SmartStock/.env
+SmartStock/ios/build/
+SmartStock/android/build/
+SmartStock/.artifacts/
+SmartStock/.metadata/
+SmartStock/.remote/
+
+# Backend
+backend/node_modules/
+backend/dist/
+backend/.env
+backend/target/
+backend/*.log
+
+# Fichiers temporaires
+*.DS_Store
+*.log
+*.tmp
+

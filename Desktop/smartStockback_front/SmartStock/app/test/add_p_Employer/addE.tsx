@@ -1,0 +1,528 @@
+import { AntDesign, Feather, Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { CameraView, PermissionStatus, useCameraPermissions } from 'expo-camera';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useRouter } from 'expo-router';
+
+import { styles } from './style';
+const API_BASE_URL = 'http://192.168.33.105:3000/api'; // Votre IP locale - À ADAPTER
+// ==================== TYPES ====================
+interface CustomInputProps {
+  placeholder: string;
+  value: string;
+  onChangeText: (text: string) => void;
+  isBarcode?: boolean;
+  iconName?: string;
+  [key: string]: any;
+}
+
+interface ToggleButtonProps {
+  type: 'Achat' | 'Vente';
+  currentType: 'Achat' | 'Vente';
+  onPress: (type: 'Achat' | 'Vente') => void;
+}
+
+// ==================== COMPONENTS ====================
+const CustomInput: React.FC<CustomInputProps> = ({
+  placeholder,
+  value,
+  onChangeText,
+  isBarcode = false,
+  ...props
+}) => {
+  const [scannerVisible, setScannerVisible] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView>(null);
+
+  const handleScan = (scanResult: { data: string }) => {
+    onChangeText(scanResult.data);
+    setScannerVisible(false);
+  };
+
+  if (!permission) return null;
+  if (permission.status !== PermissionStatus.GRANTED && scannerVisible) {
+    return (
+      <View style={styles.permissionContainer}>
+        <Text>Camera permission required</Text>
+        <TouchableOpacity onPress={requestPermission}>
+          <Text style={styles.permissionButton}>Grant Permission</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return (
+    
+    <View style={styles.inputContainer}>
+      <TextInput
+        style={styles.input}
+        placeholder={placeholder}
+        placeholderTextColor="#A9A9A9"
+        value={value}
+        onChangeText={onChangeText}
+        {...props}
+      />
+      {isBarcode && (
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={() => setScannerVisible(true)}
+        >
+          <Feather name="camera" size={20} color="#696969" />
+        </TouchableOpacity>
+      )}
+
+      <Modal visible={scannerVisible} animationType="slide">
+        <CameraView
+          style={{ flex: 1 }}
+          ref={cameraRef}
+          barcodeScannerSettings={{
+            barcodeTypes: ['qr', 'ean13', 'ean8', 'upc_a', 'upc_e', 'code39', 'code128'],
+          }}
+          onBarcodeScanned={handleScan}
+        >
+          <View style={styles.overlay}>
+            <View style={styles.scanArea} />
+          </View>
+          <View style={styles.cancelContainer}>
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => setScannerVisible(false)}
+            >
+              <Text style={styles.cancelText}>Annuler</Text>
+            </TouchableOpacity>
+          </View>
+        </CameraView>
+      </Modal>
+    </View>
+  );
+};
+
+const ToggleButton: React.FC<ToggleButtonProps> = ({ type, currentType, onPress }) => {
+  const isActive = currentType === type;
+  const icon = type === 'Achat' ? 'arrow-down' : 'arrow-up';
+  const color = type === 'Achat' ? '#f50707ff' : '#2E6B3E';
+
+  return (
+    <TouchableOpacity
+      style={[
+        styles.toggleButton,
+        isActive ? styles.activeToggleButton : styles.inactiveToggleButton,
+        isActive && { borderColor: color },
+      ]}
+      onPress={() => onPress(type)}
+    >
+      <AntDesign
+        name={icon}
+        size={16}
+        color={isActive ? 'white' : color}
+        style={{ marginRight: 5 }}
+      />
+      <Text style={[styles.toggleButtonText, { color: isActive ? 'white' : color }]}>
+        {type}
+      </Text>
+    </TouchableOpacity>
+  );
+};
+
+// ==================== MAIN SCREEN ====================
+const Profileproduit: React.FC = () => {
+  const [search, setSearch] = useState('');
+
+  // Produit
+  const [productType, setProductType] = useState<'Achat' | 'Vente'>('Achat');
+  const [barcode, setBarcode] = useState('');
+  const [name, setName] = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [price, setPrice] = useState('');
+  const [category, setCategory] = useState('');
+  const [userId, setUserId] = useState<number | null>(null);
+  const [batchProducts, setBatchProducts] = useState<any[]>([]);
+  const [productList, setProductList] = useState<any[]>([]);
+
+  // 🔹 États pour modification produit
+const [editModalVisible, setEditModalVisible] = useState(false);
+const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
+const [editName, setEditName] = useState('');
+const [editPrice, setEditPrice] = useState('');
+const [editStock, setEditStock] = useState('');
+  const router = useRouter();
+// 🔹 Ouvre le formulaire d’édition
+const openEditModal = (produit: any) => {
+  console.log('🟢 Ouverture modal pour :', produit);
+
+  setSelectedProduct(produit);
+
+  // Vérifie les propriétés disponibles et les initialise
+  setEditName(produit.nom || produit.name || '');
+  setEditPrice(
+    produit.prix_unitaire?.toString() ||
+    produit.price?.toString() ||
+    ''
+  );
+  setEditStock(
+    produit.stock_actuel?.toString() ||
+    produit.stock?.toString() ||
+    ''
+  );
+
+  setEditModalVisible(true);
+};
+
+
+// 🔹 Sauvegarde les modifications
+const handleUpdateProduct = async () => {
+  if (!selectedProduct) return;
+  if (!editName || !editPrice || !editStock) {
+    return Alert.alert('Erreur', 'Tous les champs sont obligatoires');
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/produits/${selectedProduct.id_produit}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nom: editName,
+          prix_unitaire: parseFloat(editPrice),
+          stock_actuel: parseInt(editStock),
+        }),
+      }
+    );
+
+    if (response.ok) {
+      Alert.alert('Succès', 'Produit mis à jour avec succès !');
+      setEditModalVisible(false);
+      fetchProducts(); // ✅ recharge la liste
+    } else {
+      const data = await response.json();
+      Alert.alert('Erreur', data.message || 'Mise à jour échouée');
+    }
+  } catch (error) {
+    console.error('Erreur update produit:', error);
+    Alert.alert('Erreur', 'Impossible de contacter le serveur');
+  }
+};
+
+// 🔹 Supprime un produit
+const handleDeleteProduct = async (id: number) => {
+  Alert.alert('Confirmation', 'Voulez-vous vraiment supprimer ce produit ?', [
+    { text: 'Annuler', style: 'cancel' },
+    {
+      text: 'Supprimer',
+      style: 'destructive',
+      onPress: async () => {
+        try {
+          const response = await fetch(
+            `${API_BASE_URL}/produits/${id}`,
+            { method: 'DELETE' }
+          );
+          if (response.ok) {
+            Alert.alert('Succès', 'Produit supprimé avec succès !');
+            fetchProducts();
+          } else {
+            Alert.alert('Erreur', 'Suppression échouée');
+          }
+        } catch (error) {
+          console.error('Erreur suppression produit:', error);
+          Alert.alert('Erreur', 'Impossible de contacter le serveur');
+        }
+      },
+    },
+  ]);
+};
+
+
+  useEffect(() => {
+    const getUser = async () => {
+      try {
+        const userData = await AsyncStorage.getItem('user');
+        if (userData) {
+          const user = JSON.parse(userData);
+          setUserId(user.id_user);
+        }
+      } catch (error) {
+        console.error('Erreur lors de la récupération du user:', error);
+      }
+    };
+    getUser();
+    fetchProducts();
+  }, []);
+
+  // ==================== FETCH FONCTIONS ====================
+  const fetchProducts = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/getproduits`);
+      const data = await response.json();
+      if (Array.isArray(data)) setProductList(data);
+    } catch (error) {
+      console.error('Erreur chargement produits:', error);
+    }
+  };
+
+  
+
+  
+
+  // ==================== RECHERCHE DYNAMIQUE ====================
+  useEffect(() => {
+    const fetchSearchProducts = async () => {
+      if (!search) return fetchProducts();
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/products/search?q=${encodeURIComponent(search)}`
+        );
+        const data = await response.json();
+        if (Array.isArray(data)) setProductList(data);
+      } catch (error) {
+        console.error('Erreur recherche produit:', error);
+      }
+    };
+fetchSearchProducts();
+    
+  }, [search]);
+
+  // ==================== AJOUT / ENVOI PRODUIT ====================
+  const handleAddBatch = () => {
+    if (!name || !price || !quantity) {
+      return Alert.alert('Erreur', 'Veuillez remplir tous les champs correctement');
+    }
+
+    const newProduct = {
+      nom: name.trim(),
+      code_barre: barcode || '',
+      categorie: category || '',
+      prix_unitaire: parseFloat(price.replace(',', '.')),
+      stock_actuel: parseInt(quantity.replace(',', '.')),
+      stock_min: 1,
+      id_user: userId,
+      type_mouvement: productType === 'Achat' ? 'entree' : 'sortie',
+    };
+
+    setBatchProducts([...batchProducts, newProduct]);
+    setName('');
+    setBarcode('');
+    setCategory('');
+    setPrice('');
+    setQuantity('');
+
+    Alert.alert('Ajouté', 'Produit ajouté au batch avec succès !');
+  };
+
+  const handleAddAllProducts = async () => {
+    if (batchProducts.length === 0)
+      return Alert.alert('Erreur', 'Aucun produit dans le batch');
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/produitsT`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ produits: batchProducts }),
+      });
+
+      const data = await response.json();
+
+      if (Array.isArray(data)) {
+         const total = batchProducts.reduce(
+        (acc, p) => acc + p.prix_unitaire * p.stock_actuel,
+        0
+      );
+
+      const details = batchProducts
+        .map(
+          (p) => `${p.nom} - Qty: ${p.stock_actuel} - Prix: ${p.prix_unitaire}`
+        )
+        .join('\n');
+        Alert.alert('Succès', `${details}\n\nPrix total: ${total.toFixed(2)} dt \'n Produits enregistrés avec succès !`);
+        setBatchProducts([]);
+        fetchProducts();
+      } else {
+        Alert.alert('Erreur', data.message || 'Erreur lors de l’envoi');
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Erreur', 'Impossible de contacter le serveur');
+    }
+  };
+
+  // ==================== AJOUT UTILISATEUR ====================
+   // ==================== RENDU DES FORMULAIRES ====================
+return (
+  <SafeAreaView style={styles.safeArea}>
+  <KeyboardAvoidingView
+    style={{ flex: 1 }}
+    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+  >
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={{ paddingBottom: 40 }} // espace en bas
+      showsVerticalScrollIndicator={false} // optionnel
+    >
+           <View style={styles.header1}>
+                <View style={styles.headerLeft}>
+                   <TouchableOpacity onPress={() => router.push('../transaction_balance/pageUser')} style={styles.addButtonHeader}>
+                       <Feather name="arrow-left" size={18} color="#f3ece9ff" />
+                  </TouchableOpacity>
+                  </View>
+                
+      
+                <View style={styles.headerRight}>
+                 
+                  <TouchableOpacity onPress={() => router.push('/test/home/home')} style={styles.logoutButton}>
+                    <Feather name="log-out" size={18} color="#f5f1f0ff" />
+                  </TouchableOpacity>
+                </View>
+              </View >
+    <View style={styles.formSection}>
+                  <View style={styles.toggleGroup}>
+                    <ToggleButton type="Achat" currentType={productType} onPress={setProductType} />
+                    <ToggleButton type="Vente" currentType={productType} onPress={setProductType} />
+                  </View>
+
+                  <CustomInput placeholder="Nom produit" value={name} onChangeText={setName} />
+                  <CustomInput placeholder="Catégorie" value={category} onChangeText={setCategory} />
+                  <CustomInput placeholder="Quantité" keyboardType="numeric" value={quantity} onChangeText={setQuantity} />
+                  <CustomInput placeholder="Prix unitaire" keyboardType="numeric" value={price} onChangeText={setPrice} />
+                  <CustomInput placeholder="Code à barre" isBarcode value={barcode}  onChangeText={(text) => {
+                setBarcode(text);
+                setSearch(text); }}/>
+
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
+                    <TouchableOpacity
+                      style={[styles.addButton, { flex: 1, marginRight: 5, backgroundColor: '#582a03ff' }]}
+                      onPress={handleAddBatch}
+                    >
+                      <Text style={styles.addButtonText}>Ajout produit</Text>
+                    </TouchableOpacity>
+              <TouchableOpacity
+                      style={[styles.addButton, { flex: 1, marginLeft: 5 }]}
+                      onPress={handleAddAllProducts}
+                    >
+                      <Text style={styles.addButtonText}>Sauvegarder Produit</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.card}>
+                    <View style={styles.header}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Ionicons name="cube-outline" size={18} color="#c07d45" />
+                        <Text style={styles.title}> Product Liste</Text>
+                      </View>
+                    </View>
+
+                    {/* 🔍 Barre de recherche */}
+                    <View style={styles.searchContainer}>
+                      <Ionicons name="search-outline" size={16} color="#5a5959ff" style={{ marginRight: 2 }} />
+                    <CustomInput
+                    
+                placeholder="Rechercher un produit ou scanner un code-barres"
+                value={search}
+                onChangeText={setSearch}
+                isBarcode
+              />
+                    </View>
+
+                    {/* Liste Produits */}
+                    <View style={styles.table}>
+                      <View style={[styles.row, styles.headerRow]}>
+                        <Text style={[styles.cell, styles.headerText]}>Produit</Text>
+                        <Text style={[styles.cell, styles.headerText]}>Prix</Text>
+                        <Text style={[styles.cell, styles.headerText]}>Qty</Text>
+                        <Text style={[styles.cell, styles.headerText]}>Action</Text>
+                      </View>
+
+                      <FlatList
+              data={productList}
+              keyExtractor={(item) => item.id_produit?.toString() || Math.random().toString()}
+              renderItem={({ item }) => (
+                <View style={[styles.row]}>
+                  <Text style={styles.cell}>{item.nom}</Text>
+                  <Text style={styles.cell}>{item.prix_unitaire}</Text>
+                  <Text style={styles.cell}>{item.stock_actuel}</Text>
+                  <View style={[styles.cell, { flexDirection: 'row', justifyContent: 'center' }]}> 
+                    <TouchableOpacity style={{ marginRight: 10 }} onPress={() => openEditModal(item)}>
+                      <Feather name="edit" size={16} color="#6b4f2c" />
+                    </TouchableOpacity> 
+                    <TouchableOpacity onPress={() => handleDeleteProduct(item.id_produit)}>
+                      <Feather name="trash-2" size={16} color="#d9534f" />
+                    </TouchableOpacity> 
+                  </View>
+                </View>
+              )}
+            />
+                    </View>
+      </View>
+              {/* 🔹 MODAL D'ÉDITION */}
+        <Modal visible={editModalVisible} animationType="slide" transparent>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ backgroundColor: 'white', borderRadius: 10, padding: 20, width: '85%' }}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 10 }}>
+                Modifier le produit
+              </Text>
+
+              <CustomInput
+                style={styles.input}
+                placeholder="Nom du produit"
+                value={editName}
+                onChangeText={setEditName}
+              />
+              <CustomInput
+                style={styles.input}
+                placeholder="Prix unitaire"
+                keyboardType="numeric"
+                value={editPrice}
+                onChangeText={setEditPrice}
+              />
+              <CustomInput
+                style={styles.input}
+                placeholder="Stock actuel"
+                keyboardType="numeric"
+                value={editStock}
+                onChangeText={setEditStock}
+              />
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 15 }}>
+                <TouchableOpacity
+                  style={[styles.addButton, { backgroundColor: '#ccc', flex: 1, marginRight: 5 }]}
+                  onPress={() => setEditModalVisible(false)}
+                >
+                  <Text>Annuler</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.addButton, { flex: 1, marginLeft: 5 }]}
+                  onPress={handleUpdateProduct}
+                >
+                  <Text style={{ color: 'white' }}>Enregistrer</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+    </View>
+ 
+
+</ScrollView>
+</KeyboardAvoidingView>
+</SafeAreaView>
+  );
+   
+  // ==================== MAIN RETURN ====================
+  
+};
+
+export default Profileproduit;
